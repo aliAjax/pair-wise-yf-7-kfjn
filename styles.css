@@ -295,6 +295,33 @@ h3 {
   background: var(--red);
 }
 
+.save-message {
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.save-message.error {
+  border: 1px solid var(--red);
+  background: rgba(164, 64, 55, 0.1);
+  color: var(--red);
+}
+
+.save-message.success {
+  border: 1px solid var(--green);
+  background: rgba(60, 112, 86, 0.1);
+  color: var(--green);
+}
+
+.draft-missing {
+  color: var(--gold);
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .stage {
   margin: 0 auto;
   display: grid;

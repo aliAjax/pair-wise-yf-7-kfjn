@@ -41,6 +41,7 @@ const els = {
   styleFilter: document.querySelector("#styleFilter"),
   selectedTypeLabel: document.querySelector("#selectedTypeLabel"),
   shortageBadge: document.querySelector("#shortageBadge"),
+  saveMessage: document.querySelector("#saveMessage"),
   usageList: document.querySelector("#usageList"),
   draftList: document.querySelector("#draftList"),
   placedCount: document.querySelector("#placedCount"),
@@ -49,6 +50,19 @@ const els = {
   exportBtn: document.querySelector("#exportBtn"),
   clearBoardBtn: document.querySelector("#clearBoardBtn")
 };
+
+// ---------- 存储 ----------
+
+function readStateFromStorage() {
+  try {
+    const raw = localStorage.getItem(storageKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
 
 function loadState() {
   const saved = localStorage.getItem(storageKey);
@@ -65,31 +79,49 @@ function loadState() {
   }
 }
 
-function saveState() {
+function persistState() {
   localStorage.setItem(storageKey, JSON.stringify(state));
 }
 
-function getGrid() {
-  const size = state.settings.paperSize;
-  if (size === "bookmark") return { cols: 7, rows: 18 };
-  if (size === "square") return { cols: 12, rows: 12 };
-  return { cols: 16, rows: 10 };
+function saveState() {
+  persistState();
 }
 
-function placementKey(row, col) {
-  return `${row}:${col}`;
+// ---------- 占用账 ----------
+// 一本账：当前版面落字 + 所有已保存草稿的落字，都按字模 id 计入占用。
+// 已从字模库移除的字模不再占名额（落字本身保留在草稿里，不丢弃）。
+
+function computeOccupancy(inventory, placements, drafts) {
+  const known = new Set(inventory.map((item) => item.id));
+  const occupancy = {};
+  const add = (typeId) => {
+    if (!typeId || !known.has(typeId)) return;
+    occupancy[typeId] = (occupancy[typeId] || 0) + 1;
+  };
+  placements.forEach((placement) => add(placement.typeId));
+  drafts.forEach((draft) => (draft.placements || []).forEach((placement) => add(placement.typeId)));
+  return occupancy;
 }
 
-function getSelectedType() {
-  return state.inventory.find((item) => item.id === state.selectedTypeId) || null;
+function getShortages(occupancy, inventory) {
+  return inventory
+    .map((item) => {
+      const used = occupancy[item.id] || 0;
+      return { item, used, short: Math.max(0, used - item.quantity) };
+    })
+    .filter((entry) => entry.short > 0);
 }
 
 function getUsage() {
-  return state.placements.reduce((acc, placement) => {
-    acc[placement.typeId] = (acc[placement.typeId] || 0) + 1;
-    return acc;
-  }, {});
+  return computeOccupancy(state.inventory, state.placements, state.drafts);
 }
+
+function countMissingPlacements(draft) {
+  const known = new Set(state.inventory.map((item) => item.id));
+  return (draft.placements || []).filter((placement) => !known.has(placement.typeId)).length;
+}
+
+// ---------- 渲染 ----------
 
 function renderSettings() {
   els.paperSize.value = state.settings.paperSize;
@@ -160,12 +192,12 @@ function renderStage() {
 }
 
 function renderUsage() {
-  const usage = getUsage();
-  const entries = state.inventory.filter((item) => usage[item.id]);
+  const occupancy = getUsage();
+  const entries = state.inventory.filter((item) => occupancy[item.id]);
   els.placedCount.textContent = `${state.placements.length}个落字`;
 
-  const shortages = entries.filter((item) => usage[item.id] > item.quantity);
-  els.shortageBadge.textContent = shortages.length ? `${shortages.length}处超量` : "数量充足";
+  const shortages = getShortages(occupancy, state.inventory);
+  els.shortageBadge.textContent = shortages.length ? `${shortages.length}种字模超量` : "数量充足";
   els.shortageBadge.className = `badge ${shortages.length ? "warn" : "ok"}`;
 
   const selectedType = getSelectedType();
@@ -174,12 +206,14 @@ function renderUsage() {
   els.usageList.innerHTML =
     entries
       .map((item) => {
-        const used = usage[item.id];
-        const warn = used > item.quantity ? "warn" : "";
+        const used = occupancy[item.id];
+        const short = used - item.quantity;
+        const warn = short > 0 ? "warn" : "";
+        const shortLabel = short > 0 ? ` · 缺${short}枚` : "";
         return `
           <div class="usage-item ${warn}">
             <strong>${escapeHtml(item.char)} ${escapeHtml(item.style)}</strong>
-            <span>${used}/${item.quantity}</span>
+            <span>${used}/${item.quantity}${shortLabel}</span>
           </div>
         `;
       })
@@ -189,29 +223,69 @@ function renderUsage() {
 function renderDrafts() {
   els.draftList.innerHTML =
     state.drafts
-      .map(
-        (draft) => `
+      .map((draft) => {
+        const missing = countMissingPlacements(draft);
+        const missingLabel = missing
+          ? `<span class="draft-missing">含已移除字模的落字 ${missing} 处（不占名额）</span>`
+          : "";
+        return `
           <article class="draft-item">
             <strong>${escapeHtml(draft.title)}</strong>
             <span>${draft.placements.length}个落字 · ${new Date(draft.savedAt).toLocaleString("zh-CN")}</span>
+            ${missingLabel}
             <div class="draft-actions">
               <button type="button" data-load-draft="${draft.id}">载入</button>
               <button type="button" data-delete-draft="${draft.id}">删除</button>
             </div>
           </article>
-        `
-      )
+        `;
+      })
       .join("") || `<p class="empty">还没有保存草稿。</p>`;
 }
 
 function renderAll() {
-  saveState();
   renderSettings();
   renderStyleFilter();
   renderInventory();
   renderStage();
   renderUsage();
   renderDrafts();
+}
+
+function commit() {
+  saveState();
+  renderAll();
+}
+
+let saveMessageTimer = null;
+
+function showSaveMessage(text, kind) {
+  els.saveMessage.textContent = text;
+  els.saveMessage.className = `save-message ${kind}`;
+  els.saveMessage.hidden = false;
+  clearTimeout(saveMessageTimer);
+  if (kind === "success") {
+    saveMessageTimer = setTimeout(() => {
+      els.saveMessage.hidden = true;
+    }, 3000);
+  }
+}
+
+// ---------- 操作 ----------
+
+function getGrid() {
+  const size = state.settings.paperSize;
+  if (size === "bookmark") return { cols: 7, rows: 18 };
+  if (size === "square") return { cols: 12, rows: 12 };
+  return { cols: 16, rows: 10 };
+}
+
+function placementKey(row, col) {
+  return `${row}:${col}`;
+}
+
+function getSelectedType() {
+  return state.inventory.find((item) => item.id === state.selectedTypeId) || null;
 }
 
 function placeType(row, col, typeId = state.selectedTypeId) {
@@ -226,7 +300,7 @@ function placeType(row, col, typeId = state.selectedTypeId) {
   } else {
     state.placements.push({ row, col, typeId });
   }
-  renderAll();
+  commit();
 }
 
 function addType(event) {
@@ -245,19 +319,53 @@ function addType(event) {
   els.typeForm.reset();
   els.sizeInput.value = 24;
   els.quantityInput.value = 3;
-  renderAll();
+  commit();
 }
 
 function saveDraft() {
   const title = state.settings.workTitle.trim() || "未命名作品";
-  state.drafts.unshift({
+
+  // 保存前重新读取最新占用：其他标签页刚保存的草稿、字模库的增删都算进来，
+  // 后保存的一方按最新占用重算。
+  const fresh = readStateFromStorage();
+  const inventory = fresh && Array.isArray(fresh.inventory) ? fresh.inventory : state.inventory;
+  const drafts = fresh && Array.isArray(fresh.drafts) ? fresh.drafts : state.drafts;
+
+  const newDraft = {
     id: crypto.randomUUID(),
     title,
     settings: structuredClone(state.settings),
     placements: structuredClone(state.placements),
     savedAt: new Date().toISOString()
-  });
-  state.drafts = state.drafts.slice(0, 8);
+  };
+  const candidateDrafts = [newDraft, ...drafts].slice(0, 8);
+
+  // 一本账：当前版面 + 全部草稿的落字，按字模 id 汇总占用。
+  const occupancy = computeOccupancy(inventory, state.placements, candidateDrafts);
+  const shortages = getShortages(occupancy, inventory);
+  if (shortages.length) {
+    // 占用不入账，本次保存中止；调整版面或字模数量后可直接重试。
+    const detail = shortages
+      .map((entry) => `${escapeHtml(entry.item.char)}·${escapeHtml(entry.item.style)} 缺${entry.short}枚`)
+      .join("，");
+    showSaveMessage(`保存中止：以下字模数量不足 —— ${detail}。请减少落字或补充字模后重试。`, "error");
+    return;
+  }
+
+  const prevDrafts = state.drafts;
+  const prevInventory = state.inventory;
+  state.drafts = candidateDrafts;
+  state.inventory = inventory;
+  try {
+    persistState();
+  } catch (err) {
+    // 写入失败：回滚，本次没存成的占用不留在账上，可重试。
+    state.drafts = prevDrafts;
+    state.inventory = prevInventory;
+    showSaveMessage("保存失败：本地存储写入出错，请重试。", "error");
+    return;
+  }
+  showSaveMessage("草稿已保存，落字已占用字模名额。", "success");
   renderAll();
 }
 
@@ -309,21 +417,23 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+// ---------- 事件 ----------
+
 els.paperSize.addEventListener("change", () => {
   state.settings.paperSize = els.paperSize.value;
   const { cols, rows } = getGrid();
   state.placements = state.placements.filter((item) => item.row < rows && item.col < cols);
-  renderAll();
+  commit();
 });
 
 els.flowMode.addEventListener("change", () => {
   state.settings.flowMode = els.flowMode.value;
-  renderAll();
+  commit();
 });
 
 els.gridGap.addEventListener("input", () => {
   state.settings.gridGap = Number(els.gridGap.value);
-  renderAll();
+  commit();
 });
 
 els.workTitle.addEventListener("input", () => {
@@ -338,7 +448,7 @@ els.saveDraftBtn.addEventListener("click", saveDraft);
 els.exportBtn.addEventListener("click", exportPreview);
 els.clearBoardBtn.addEventListener("click", () => {
   state.placements = [];
-  renderAll();
+  commit();
 });
 
 els.typeList.addEventListener("click", (event) => {
@@ -346,15 +456,16 @@ els.typeList.addEventListener("click", (event) => {
   if (deleteButton) {
     const typeId = deleteButton.dataset.deleteType;
     state.inventory = state.inventory.filter((item) => item.id !== typeId);
+    // 版面上的落字随字模一起清掉；草稿里的落字保留，只是不再占名额。
     state.placements = state.placements.filter((item) => item.typeId !== typeId);
     if (state.selectedTypeId === typeId) state.selectedTypeId = state.inventory[0]?.id || null;
-    renderAll();
+    commit();
     return;
   }
   const card = event.target.closest("[data-type-id]");
   if (!card) return;
   state.selectedTypeId = card.dataset.typeId;
-  renderAll();
+  commit();
 });
 
 els.typeList.addEventListener("dragstart", (event) => {
@@ -388,12 +499,22 @@ els.draftList.addEventListener("click", (event) => {
     if (!draft) return;
     state.settings = structuredClone(draft.settings);
     state.placements = structuredClone(draft.placements);
-    renderAll();
+    commit();
   }
   if (deleteButton) {
     state.drafts = state.drafts.filter((item) => item.id !== deleteButton.dataset.deleteDraft);
-    renderAll();
+    commit();
   }
+});
+
+// 其他标签页保存后，同步最新的字模库与草稿，占用账随之重算。
+window.addEventListener("storage", (event) => {
+  if (event.key !== storageKey) return;
+  const fresh = readStateFromStorage();
+  if (!fresh) return;
+  if (Array.isArray(fresh.drafts)) state.drafts = fresh.drafts;
+  if (Array.isArray(fresh.inventory)) state.inventory = fresh.inventory;
+  renderAll();
 });
 
 renderAll();
