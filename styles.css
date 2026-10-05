@@ -214,6 +214,47 @@ h3 {
   cursor: grab;
 }
 
+.type-controls {
+  display: grid;
+  gap: 6px;
+  justify-items: end;
+}
+
+.qty-stepper {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.qty-stepper .mini-btn {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  font-weight: 900;
+}
+
+.qty-num {
+  min-width: 22px;
+  text-align: center;
+  font-weight: 800;
+  font-size: 14px;
+}
+
+.stock {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.stock.tight {
+  color: var(--gold);
+  font-weight: 800;
+}
+
+.stock.warn {
+  color: var(--red);
+  font-weight: 800;
+}
+
 .type-card.selected {
   border-color: var(--red);
   box-shadow: inset 0 0 0 2px rgba(164, 64, 55, 0.15);
@@ -345,6 +386,62 @@ h3 {
   border-style: solid;
   background: rgba(47, 41, 33, 0.9);
   color: #fff5df;
+}
+
+.cell.missing {
+  border-style: dashed;
+  border-color: var(--red);
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(164, 64, 55, 0.12),
+    rgba(164, 64, 55, 0.12) 6px,
+    rgba(255, 253, 248, 0.6) 6px,
+    rgba(255, 253, 248, 0.6) 12px
+  );
+  color: var(--red);
+}
+
+.save-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.save-banner.warn {
+  border: 1px solid var(--red);
+  background: rgba(164, 64, 55, 0.1);
+  color: var(--red);
+  font-weight: 700;
+}
+
+.save-banner.ok {
+  border: 1px solid var(--green);
+  background: rgba(60, 112, 86, 0.12);
+  color: var(--green);
+  font-weight: 700;
+}
+
+.save-banner button {
+  padding: 6px 12px;
+  white-space: nowrap;
+}
+
+.usage-item.tight {
+  border-color: var(--gold);
+  background: rgba(183, 134, 44, 0.08);
+}
+
+.missing-note {
+  color: var(--red);
+  font-style: normal;
+  font-weight: 700;
 }
 
 .cell.vertical {
